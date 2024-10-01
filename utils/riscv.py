@@ -17,14 +17,29 @@ MAX_INT: Final[int] = 0x7FFF_FFFF
 class RvUnaryOp(Enum):
     NEG = auto()
     SNEZ = auto()
+    SEQZ = auto()
+    NOT = auto()
+
 
 @unique
 class RvBinaryOp(Enum):
     ADD = auto()
+    SUB = auto()
+    MUL = auto()
+    DIV = auto()
+    REM = auto()
+    SLT = auto()
+    SGT = auto()
+    AND = auto()
     OR = auto()
 
-class Riscv:
 
+@unique
+class RvSpecialOp(Enum):
+    XORI = auto()
+
+
+class Riscv:
     ZERO = Reg(0, "x0")  # always zero
     RA = Reg(1, "ra")  # return address
     SP = Reg(2, "sp")  # stack pointer
@@ -72,6 +87,7 @@ class Riscv:
     FMT2 = "{}, {}"
     FMT3 = "{}, {}, {}"
     FMT_OFFSET = "{}, {}({})"
+
     # Todo FMT4
 
     class JumpToEpilogue(BackendInstr):
@@ -121,21 +137,37 @@ class Riscv:
                 str(self.dsts[0]), str(self.srcs[0])
             )
 
+    class Special(BackendInstr):
+        def __init__(self, op: RvUnaryOp, dst: Temp, src: int) -> None:
+            super().__init__(InstrKind.SEQ, [dst], [Temp(0)], None)
+            self.op = op.__str__()[12:].lower()
+            self.num = src
+
+        def __str__(self) -> str:
+            return "{} ".format(self.op) + Riscv.FMT3.format(
+                str(self.dsts[0]), str(self.dsts[0]), str(self.num)
+            )
+
     class Binary(BackendInstr):
         def __init__(self, op: RvBinaryOp, dst: Temp, src0: Temp, src1: Temp) -> None:
-            super().__init__(InstrKind.SEQ, [dst], [src0, src1], None)
+            self._zero = False
+            if src0 == 0:
+                super().__init__(InstrKind.SEQ, [dst], [Temp(0), src1], None)
+                self._zero = True
+            else:
+                super().__init__(InstrKind.SEQ, [dst], [src0, src1], None)
             self.op = op.__str__()[11:].lower()
 
         def __str__(self) -> str:
             return "{} ".format(self.op) + Riscv.FMT3.format(
-                str(self.dsts[0]), str(self.srcs[0]), str(self.srcs[1])
+                str(self.dsts[0]), ("zero" if self._zero else str(self.srcs[0])), str(self.srcs[1])
             )
-    
+
     class Branch(BackendInstr):
         def __init__(self, cond: Temp, target: Label) -> None:
             super().__init__(InstrKind.COND_JMP, [], [cond], target)
             self.target = target
-        
+
         def __str__(self) -> str:
             return "beq " + Riscv.FMT3.format(str(Riscv.ZERO), str(self.srcs[0]), str(self.target))
 
@@ -143,13 +175,13 @@ class Riscv:
         def __init__(self, target: Label) -> None:
             super().__init__(InstrKind.JMP, [], [], target)
             self.target = target
-        
+
         def __str__(self) -> str:
             return "j " + str(self.target)
 
     class SPAdd(BackendInstr):
         def __init__(self, offset: int) -> None:
-            super().__init__(InstrKind.SEQ, [], [], None)
+            super().__init__(InstrKind.SEQ, [Riscv.SP], [Riscv.SP], None)
             self.offset = offset
 
         def __str__(self) -> str:
@@ -160,33 +192,29 @@ class Riscv:
 
     class NativeStoreWord(BackendInstr):
         def __init__(self, src: Reg, base: Reg, offset: int) -> None:
-            super().__init__(InstrKind.SEQ, [], [], None)
-            self.src = src
-            self.base = base
+            super().__init__(InstrKind.SEQ, [], [src, base], None)
             self.offset = offset
 
         def __str__(self) -> str:
             assert -2048 <= self.offset <= 2047  # Riscv imm [11:0]
             return "sw " + Riscv.FMT_OFFSET.format(
-                str(self.src), str(self.offset), str(self.base)
+                str(self.srcs[0]), str(self.offset), str(self.srcs[1])
             )
 
     class NativeLoadWord(BackendInstr):
         def __init__(self, dst: Reg, base: Reg, offset: int) -> None:
-            super().__init__(InstrKind.SEQ, [], [], None)
-            self.dst = dst
-            self.base = base
+            super().__init__(InstrKind.SEQ, [dst], [base], None)
             self.offset = offset
 
         def __str__(self) -> str:
             assert -2048 <= self.offset <= 2047  # Riscv imm [11:0]
             return "lw " + Riscv.FMT_OFFSET.format(
-                str(self.dst), str(self.offset), str(self.base)
+                str(self.dsts[0]), str(self.offset), str(self.srcs[0])
             )
 
     class NativeReturn(BackendInstr):
         def __init__(self) -> None:
-            super().__init__(InstrKind.RET, [], [], None)
+            super().__init__(InstrKind.RET, [Riscv.RA], [], None)
 
         def __str__(self) -> str:
             return "ret"

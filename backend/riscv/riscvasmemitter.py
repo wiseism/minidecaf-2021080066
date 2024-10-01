@@ -2,7 +2,7 @@ from typing import Sequence, Tuple
 
 from utils.error import IllegalArgumentException
 from utils.label.label import Label, LabelKind
-from utils.riscv import Riscv, RvBinaryOp, RvUnaryOp
+from utils.riscv import Riscv, RvBinaryOp, RvUnaryOp, RvSpecialOp
 from utils.tac.reg import Reg
 from utils.tac.tacfunc import TACFunc
 from utils.tac.tacinstr import *
@@ -46,6 +46,10 @@ class RiscvAsmEmitter():
 
         return (selector.seq, info)
 
+    # use info to construct a RiscvSubroutineEmitter
+    def emitSubroutine(self, info: SubroutineInfo):
+        return RiscvSubroutineEmitter(self, info)
+
     # return all the string stored in asmcodeprinter
     def emitEnd(self):
         return self.printer.close()
@@ -58,7 +62,7 @@ class RiscvAsmEmitter():
         def visitOther(self, instr: TACInstr) -> None:
             raise NotImplementedError("RiscvInstrSelector visit{} not implemented".format(type(instr).__name__))
 
-        # in step11, you need to think about how to deal with globalTemp in almost all the visit functions. 
+        # in step11, you need to think about how to deal with globalTemp in almost all the visit functions.
         def visitReturn(self, instr: Return) -> None:
             if instr.value is not None:
                 self.seq.append(Riscv.Move(Riscv.A0, instr.value))
@@ -75,6 +79,8 @@ class RiscvAsmEmitter():
         def visitUnary(self, instr: Unary) -> None:
             op = {
                 TacUnaryOp.NEG: RvUnaryOp.NEG,
+                TacUnaryOp.BITNOT: RvUnaryOp.NOT,
+                TacUnaryOp.LOGICNOT: RvUnaryOp.SEQZ,
                 # You can add unary operations here.
             }[instr.op]
             self.seq.append(Riscv.Unary(op, instr.dst, instr.operand))
@@ -87,21 +93,46 @@ class RiscvAsmEmitter():
             if instr.op == TacBinaryOp.LOR:
                 self.seq.append(Riscv.Binary(RvBinaryOp.OR, instr.dst, instr.lhs, instr.rhs))
                 self.seq.append(Riscv.Unary(RvUnaryOp.SNEZ, instr.dst, instr.dst))
+            elif instr.op == TacBinaryOp.LAND:
+                self.seq.append(Riscv.Unary(RvUnaryOp.SNEZ, instr.dst, instr.lhs))
+                self.seq.append(Riscv.Binary(RvBinaryOp.SUB, instr.dst, 0, instr.dst))
+                self.seq.append(Riscv.Binary(RvBinaryOp.AND, instr.dst, instr.dst, instr.rhs))
+                self.seq.append(Riscv.Unary(RvUnaryOp.SNEZ, instr.dst, instr.dst))
+            elif instr.op == TacBinaryOp.BGE:
+                self.seq.append(Riscv.Binary(RvBinaryOp.SLT, instr.dst, instr.lhs, instr.rhs))
+                self.seq.append(Riscv.Special(RvSpecialOp.XORI, instr.dst, 1))
+            elif instr.op == TacBinaryOp.BLE:
+                self.seq.append(Riscv.Binary(RvBinaryOp.SGT, instr.dst, instr.lhs, instr.rhs))
+                self.seq.append(Riscv.Special(RvSpecialOp.XORI, instr.dst, 1))
+            elif instr.op == TacBinaryOp.BEQ:
+                self.seq.append(Riscv.Binary(RvBinaryOp.SUB, instr.dst, instr.rhs, instr.lhs))
+                self.seq.append(Riscv.Unary(RvUnaryOp.SEQZ, instr.dst, instr.dst))
+            elif instr.op == TacBinaryOp.BNE:
+                self.seq.append(Riscv.Binary(RvBinaryOp.SUB, instr.dst, instr.rhs, instr.lhs))
+                self.seq.append(Riscv.Unary(RvUnaryOp.SNEZ, instr.dst, instr.dst))
             else:
                 op = {
                     TacBinaryOp.ADD: RvBinaryOp.ADD,
+                    TacBinaryOp.SUB: RvBinaryOp.SUB,
+                    TacBinaryOp.MUL: RvBinaryOp.MUL,
+                    TacBinaryOp.DIV: RvBinaryOp.DIV,
+                    TacBinaryOp.MOD: RvBinaryOp.REM,
+                    TacBinaryOp.SLT: RvBinaryOp.SLT,
+                    TacBinaryOp.SGT: RvBinaryOp.SGT,
                     # You can add binary operations here.
                 }[instr.op]
                 self.seq.append(Riscv.Binary(op, instr.dst, instr.lhs, instr.rhs))
 
         def visitCondBranch(self, instr: CondBranch) -> None:
             self.seq.append(Riscv.Branch(instr.cond, instr.label))
-        
+
         def visitBranch(self, instr: Branch) -> None:
             self.seq.append(Riscv.Jump(instr.target))
 
         # in step9, you need to think about how to pass the parameters and how to store and restore callerSave regs
-        # in step11, you need to think about how to store the array 
+        # in step11, you need to think about how to store the array
+
+
 """
 RiscvAsmEmitter: an SubroutineEmitter for RiscV
 """

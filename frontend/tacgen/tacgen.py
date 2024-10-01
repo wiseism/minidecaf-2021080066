@@ -33,7 +33,6 @@ class LabelManager:
         self.nextTempLabelId += 1
         return BlockLabel(str(self.nextTempLabelId))
 
-
 class TACFuncEmitter(TACVisitor):
     """
     Translates a minidecaf (AST) function into low-level TAC function.
@@ -206,11 +205,9 @@ class TACGen(Visitor[TACFuncEmitter, None]):
         loopLabel = mv.freshLabel()
         breakLabel = mv.freshLabel()
         mv.openLoop(breakLabel, loopLabel)
-
         mv.visitLabel(beginLabel)
         stmt.cond.accept(self, mv)
         mv.visitCondBranch(tacop.CondBranchOp.BEQ, stmt.cond.getattr("val"), breakLabel)
-
         stmt.body.accept(self, mv)
         mv.visitLabel(loopLabel)
         mv.visitBranch(beginLabel)
@@ -219,9 +216,10 @@ class TACGen(Visitor[TACFuncEmitter, None]):
 
     def visitUnary(self, expr: Unary, mv: TACFuncEmitter) -> None:
         expr.operand.accept(self, mv)
-
         op = {
             node.UnaryOp.Neg: tacop.TacUnaryOp.NEG,
+            node.UnaryOp.BitNot: tacop.TacUnaryOp.BITNOT,
+            node.UnaryOp.LogicNot: tacop.TacUnaryOp.LOGICNOT,
             # You can add unary operations here.
         }[expr.op]
         expr.setattr("val", mv.visitUnary(op, expr.operand.getattr("val")))
@@ -229,20 +227,30 @@ class TACGen(Visitor[TACFuncEmitter, None]):
     def visitBinary(self, expr: Binary, mv: TACFuncEmitter) -> None:
         expr.lhs.accept(self, mv)
         expr.rhs.accept(self, mv)
-
         op = {
             node.BinaryOp.Add: tacop.TacBinaryOp.ADD,
+            node.BinaryOp.Sub: tacop.TacBinaryOp.SUB,
+            node.BinaryOp.Mul: tacop.TacBinaryOp.MUL,
+            node.BinaryOp.Div: tacop.TacBinaryOp.DIV,
+            node.BinaryOp.Mod: tacop.TacBinaryOp.MOD,
+            node.BinaryOp.EQ: tacop.TacBinaryOp.BEQ,
+            node.BinaryOp.NE: tacop.TacBinaryOp.BNE,
+            node.BinaryOp.LT: tacop.TacBinaryOp.SLT,
+            node.BinaryOp.LE: tacop.TacBinaryOp.BLE,
+            node.BinaryOp.GT: tacop.TacBinaryOp.SGT,
+            node.BinaryOp.GE: tacop.TacBinaryOp.BGE,
+            node.BinaryOp.LogicAnd: tacop.TacBinaryOp.LAND,
             node.BinaryOp.LogicOr: tacop.TacBinaryOp.LOR,
-            # You can add binary operations here.
         }[expr.op]
         expr.setattr(
-            "val", mv.visitBinary(op, expr.lhs.getattr("val"), expr.rhs.getattr("val"))
+            "val",
+            mv.visitBinary(
+                op, expr.lhs.getattr("val"), expr.rhs.getattr("val")
+            ),
         )
 
     def visitCondExpr(self, expr: ConditionExpression, mv: TACFuncEmitter) -> None:
-        """
-        1. Refer to the implementation of visitIf and visitBinary.
-        """
+        """1. Refer to the implementation of visitIf and visitBinary."""
         raise NotImplementedError
 
     def visitIntLiteral(self, expr: IntLiteral, mv: TACFuncEmitter) -> None:
