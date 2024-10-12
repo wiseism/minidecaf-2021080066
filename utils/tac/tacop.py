@@ -40,6 +40,13 @@ class TacBinaryOp(Enum):
     LAND = auto()
     LOR = auto()
 
+    # TODO: Get rid of the old ones
+    REM = auto()
+    EQU = auto()
+    NEQ = auto()
+    LEQ = auto()
+    GEQ = auto()
+
 
 # Kinds of branching with conditions.
 @unique

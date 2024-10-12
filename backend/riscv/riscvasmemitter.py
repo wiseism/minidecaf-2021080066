@@ -2,7 +2,7 @@ from typing import Sequence, Tuple
 
 from utils.error import IllegalArgumentException
 from utils.label.label import Label, LabelKind
-from utils.riscv import Riscv, RvBinaryOp, RvUnaryOp, RvSpecialOp
+from utils.riscv import Riscv, RvBinaryOp, RvUnaryOp
 from utils.tac.reg import Reg
 from utils.tac.tacfunc import TACFunc
 from utils.tac.tacinstr import *
@@ -85,6 +85,9 @@ class RiscvAsmEmitter():
             }[instr.op]
             self.seq.append(Riscv.Unary(op, instr.dst, instr.operand))
 
+        def visitAssign(self, instr: Assign) -> None:
+            self.seq.append(Riscv.Move(instr.dst, instr.src))
+
         def visitBinary(self, instr: Binary) -> None:
             """
             For different tac operation, you should translate it to different RiscV code
@@ -95,28 +98,32 @@ class RiscvAsmEmitter():
                 self.seq.append(Riscv.Unary(RvUnaryOp.SNEZ, instr.dst, instr.dst))
             elif instr.op == TacBinaryOp.LAND:
                 self.seq.append(Riscv.Unary(RvUnaryOp.SNEZ, instr.dst, instr.lhs))
-                self.seq.append(Riscv.Binary(RvBinaryOp.SUB, instr.dst, 0, instr.dst))
+                self.seq.append(Riscv.Binary(RvBinaryOp.SUB, instr.dst, Riscv.ZERO, instr.dst))
                 self.seq.append(Riscv.Binary(RvBinaryOp.AND, instr.dst, instr.dst, instr.rhs))
                 self.seq.append(Riscv.Unary(RvUnaryOp.SNEZ, instr.dst, instr.dst))
-            elif instr.op == TacBinaryOp.BGE:
-                self.seq.append(Riscv.Binary(RvBinaryOp.SLT, instr.dst, instr.lhs, instr.rhs))
-                self.seq.append(Riscv.Special(RvSpecialOp.XORI, instr.dst, 1))
-            elif instr.op == TacBinaryOp.BLE:
-                self.seq.append(Riscv.Binary(RvBinaryOp.SGT, instr.dst, instr.lhs, instr.rhs))
-                self.seq.append(Riscv.Special(RvSpecialOp.XORI, instr.dst, 1))
-            elif instr.op == TacBinaryOp.BEQ:
-                self.seq.append(Riscv.Binary(RvBinaryOp.SUB, instr.dst, instr.rhs, instr.lhs))
+            elif instr.op == TacBinaryOp.EQU:
+                self.seq.append(Riscv.Binary(RvBinaryOp.SUB, instr.dst, instr.lhs, instr.rhs))
                 self.seq.append(Riscv.Unary(RvUnaryOp.SEQZ, instr.dst, instr.dst))
-            elif instr.op == TacBinaryOp.BNE:
-                self.seq.append(Riscv.Binary(RvBinaryOp.SUB, instr.dst, instr.rhs, instr.lhs))
+            elif instr.op == TacBinaryOp.NEQ:
+                self.seq.append(Riscv.Binary(RvBinaryOp.SUB, instr.dst, instr.lhs, instr.rhs))
                 self.seq.append(Riscv.Unary(RvUnaryOp.SNEZ, instr.dst, instr.dst))
+            elif instr.op == TacBinaryOp.LEQ:
+                self.seq.append(Riscv.Binary(RvBinaryOp.SLT, instr.dst, instr.lhs, instr.rhs))
+                self.seq.append(Riscv.Binary(RvBinaryOp.SUB, instr.lhs, instr.lhs, instr.rhs))
+                self.seq.append(Riscv.Unary(RvUnaryOp.SEQZ, instr.lhs, instr.lhs))
+                self.seq.append(Riscv.Binary(RvBinaryOp.OR, instr.dst, instr.dst, instr.lhs))
+            elif instr.op == TacBinaryOp.GEQ:
+                self.seq.append(Riscv.Binary(RvBinaryOp.SGT, instr.dst, instr.lhs, instr.rhs))
+                self.seq.append(Riscv.Binary(RvBinaryOp.SUB, instr.lhs, instr.lhs, instr.rhs))
+                self.seq.append(Riscv.Unary(RvUnaryOp.SEQZ, instr.lhs, instr.lhs))
+                self.seq.append(Riscv.Binary(RvBinaryOp.OR, instr.dst, instr.dst, instr.lhs))
             else:
                 op = {
                     TacBinaryOp.ADD: RvBinaryOp.ADD,
                     TacBinaryOp.SUB: RvBinaryOp.SUB,
                     TacBinaryOp.MUL: RvBinaryOp.MUL,
                     TacBinaryOp.DIV: RvBinaryOp.DIV,
-                    TacBinaryOp.MOD: RvBinaryOp.REM,
+                    TacBinaryOp.REM: RvBinaryOp.REM,
                     TacBinaryOp.SLT: RvBinaryOp.SLT,
                     TacBinaryOp.SGT: RvBinaryOp.SGT,
                     # You can add binary operations here.
@@ -159,7 +166,7 @@ class RiscvSubroutineEmitter():
     def emitComment(self, comment: str) -> None:
         # you can add some log here to help you debug
         pass
-    
+
     # store some temp to stack
     # usually happen when reaching the end of a basicblock
     # in step9, you need to think about the fuction parameters here

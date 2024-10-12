@@ -132,7 +132,6 @@ class TACFuncEmitter(TACVisitor):
     def getContinueLabel(self) -> Label:
         return self.continueLabelStack[-1]
 
-
 class TACGen(Visitor[TACFuncEmitter, None]):
     # Entry of this phase
     def transform(self, program: Program) -> TACProg:
@@ -160,7 +159,7 @@ class TACGen(Visitor[TACFuncEmitter, None]):
         """
         1. Set the 'val' attribute of ident as the temp variable of the 'symbol' attribute of ident.
         """
-        raise NotImplementedError
+        ident.setattr('val', ident.getattr('symbol').temp)
 
     def visitDeclaration(self, decl: Declaration, mv: TACFuncEmitter) -> None:
         """
@@ -168,7 +167,11 @@ class TACGen(Visitor[TACFuncEmitter, None]):
         2. Use mv.freshTemp to get a new temp variable for this symbol.
         3. If the declaration has an initial value, use mv.visitAssignment to set it.
         """
-        raise NotImplementedError
+        symbol = decl.getattr("symbol")
+        symbol.temp = mv.freshTemp()
+        if decl.init_expr:
+            decl.init_expr.accept(self,mv)
+            mv.visitAssignment(symbol.temp,decl.init_expr.getattr("val"))
 
     def visitAssignment(self, expr: Assignment, mv: TACFuncEmitter) -> None:
         """
@@ -176,7 +179,10 @@ class TACGen(Visitor[TACFuncEmitter, None]):
         2. Use mv.visitAssignment to emit an assignment instruction.
         3. Set the 'val' attribute of expr as the value of assignment instruction.
         """
-        raise NotImplementedError
+        expr.rhs.accept(self,mv)
+        var = expr.lhs.getattr('symbol').temp
+        mv.visitAssignment(var, expr.rhs.getattr('val'))
+        expr.setattr('val', expr.rhs.getattr('val'))
 
     def visitIf(self, stmt: If, mv: TACFuncEmitter) -> None:
         stmt.cond.accept(self, mv)
@@ -232,15 +238,16 @@ class TACGen(Visitor[TACFuncEmitter, None]):
             node.BinaryOp.Sub: tacop.TacBinaryOp.SUB,
             node.BinaryOp.Mul: tacop.TacBinaryOp.MUL,
             node.BinaryOp.Div: tacop.TacBinaryOp.DIV,
-            node.BinaryOp.Mod: tacop.TacBinaryOp.MOD,
-            node.BinaryOp.EQ: tacop.TacBinaryOp.BEQ,
-            node.BinaryOp.NE: tacop.TacBinaryOp.BNE,
-            node.BinaryOp.LT: tacop.TacBinaryOp.SLT,
-            node.BinaryOp.LE: tacop.TacBinaryOp.BLE,
-            node.BinaryOp.GT: tacop.TacBinaryOp.SGT,
-            node.BinaryOp.GE: tacop.TacBinaryOp.BGE,
-            node.BinaryOp.LogicAnd: tacop.TacBinaryOp.LAND,
+            node.BinaryOp.Mod: tacop.TacBinaryOp.REM,
             node.BinaryOp.LogicOr: tacop.TacBinaryOp.LOR,
+            node.BinaryOp.EQ: tacop.TacBinaryOp.EQU,
+            node.BinaryOp.NE: tacop.TacBinaryOp.NEQ,
+            node.BinaryOp.LT: tacop.TacBinaryOp.SLT,
+            node.BinaryOp.LE: tacop.TacBinaryOp.LEQ,
+            node.BinaryOp.GT: tacop.TacBinaryOp.SGT,
+            node.BinaryOp.GE: tacop.TacBinaryOp.GEQ,
+            node.BinaryOp.LogicAnd: tacop.TacBinaryOp.LAND,
+            # You can add binary operations here.
         }[expr.op]
         expr.setattr(
             "val",
