@@ -167,6 +167,13 @@ class RiscvSubroutineEmitter():
         # you can add some log here to help you debug
         pass
 
+    def isNonReturnedBlock(self):
+        # Check if the last instruction in the buffer is a return instruction
+        if not self.buf:
+            return True  # If buffer is empty, consider it as non-returned block
+        last_instr = self.buf[-1]
+        return not isinstance(last_instr, Riscv.NativeReturn)
+
     # store some temp to stack
     # usually happen when reaching the end of a basicblock
     # in step9, you need to think about the fuction parameters here

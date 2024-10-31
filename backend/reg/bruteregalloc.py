@@ -36,9 +36,13 @@ class BruteRegAlloc(RegAlloc):
 
     def accept(self, graph: CFG, info: SubroutineInfo) -> None:
         subEmitter = RiscvSubroutineEmitter(self.emitter, info)
+
         for bb in graph.iterator():
             # you need to think more here
             # maybe we don't need to alloc regs for all the basic blocks
+            if (graph.unreachableBlock(bb.id)) == False:
+                self.localAlloc(bb, subEmitter)
+
             if bb.label is not None:
                 subEmitter.emitLabel(bb.label)
             self.localAlloc(bb, subEmitter)
@@ -96,7 +100,7 @@ class BruteRegAlloc(RegAlloc):
         subEmitter.emitAsm(instr)
 
     def allocRegFor(
-        self, temp: Temp, isRead: bool, live: set[int], subEmitter: RiscvSubroutineEmitter
+            self, temp: Temp, isRead: bool, live: set[int], subEmitter: RiscvSubroutineEmitter
     ):
         if temp.index in self.bindings:
             return self.bindings[temp.index]
@@ -108,7 +112,7 @@ class BruteRegAlloc(RegAlloc):
                         str(temp), str(reg), str(isRead)
                     )
                 )
-                if isRead:
+                if isRead and not subEmitter.isNonReturnedBlock():
                     subEmitter.emitLoadFromStack(reg, temp)
                 if reg.occupied:
                     self.unbind(reg.temp)
