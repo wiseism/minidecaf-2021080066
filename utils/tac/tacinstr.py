@@ -2,19 +2,21 @@ from enum import Enum, auto, unique
 from typing import Any, Optional, Union
 
 from utils.label.label import Label
+from utils.tac.nativeinstr import NativeInstr
 from utils.tac.reg import Reg
 
 from .tacop import *
 from .tacvisitor import TACVisitor
 from .temp import Temp
 
+
 class TACInstr:
     def __init__(
-        self,
-        kind: InstrKind,
-        dsts: list[Temp],
-        srcs: list[Temp],
-        label: Optional[Label],
+            self,
+            kind: InstrKind,
+            dsts: list[Temp],
+            srcs: list[Temp],
+            label: Optional[Label],
     ) -> None:
         self.kind = kind
         self.dsts = dsts.copy()
@@ -35,6 +37,17 @@ class TACInstr:
 
     def isReturn(self) -> bool:
         return self.kind == InstrKind.RET
+
+    def toNative(self, dstRegs: list[Reg], srcRegs: list[Reg]) -> NativeInstr:
+        oldDsts = dstRegs
+        oldSrcs = srcRegs
+        self.dsts = dstRegs
+        self.srcs = srcRegs
+        instrString = self.__str__()
+        newInstr = NativeInstr(self.kind, dstRegs, srcRegs, self.label, instrString)
+        self.dsts = oldDsts
+        self.srcs = oldSrcs
+        return newInstr
 
     def accept(self, v: TACVisitor) -> None:
         pass
@@ -77,9 +90,14 @@ class Unary(TACInstr):
         self.operand = operand
 
     def __str__(self) -> str:
+        op = {
+            TacUnaryOp.NEG: "-",
+            TacUnaryOp.LOGICNOT: "!",
+            TacUnaryOp.BITNOT: "~",
+        }[self.op]
         return "%s = %s %s" % (
             self.dst,
-            ("-" if (self.op == TacUnaryOp.NEG) else "!"),
+            op,
             self.operand,
         )
 
@@ -111,6 +129,9 @@ class Binary(TACInstr):
             TacBinaryOp.GEQ: ">=",
             TacBinaryOp.AND: "&&",
             TacBinaryOp.OR: "||",
+            TacBinaryOp.BITAND: "&",
+            TacBinaryOp.BITOR: "|",
+            TacBinaryOp.XOR: "^",
         }[self.op]
         return "%s = (%s %s %s)" % (self.dst, self.lhs, opStr, self.rhs)
 
@@ -189,3 +210,31 @@ class Mark(TACInstr):
 
     def accept(self, v: TACVisitor) -> None:
         v.visitMark(self)
+
+
+# Function parameters
+class Param(TACInstr):
+    def __init__(self, para: Temp) -> None:
+        super().__init__(InstrKind.SEQ, [], [para], [])
+        self.src = para
+
+    def __str__(self) -> str:
+        return "param %s" % str(self.src)
+
+    def accept(self, v: TACVisitor) -> None:
+        v.visitParam(self)
+
+
+# Function call
+class Callinstr(TACInstr):
+    def __init__(self, dst: Temp, func: Label, argNum: int) -> None:
+        super().__init__(InstrKind.SEQ, [dst], [], func)
+        self.dst = dst
+        self.func = func
+        self.argNum = argNum
+
+    def __str__(self) -> str:
+        return "%s = call %s" % (str(self.dst), str(self.func))
+
+    def accept(self, v: TACVisitor) -> None:
+        return v.visitCall(self)

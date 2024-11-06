@@ -1,8 +1,9 @@
 from typing import Protocol, TypeVar, cast
 
-from frontend.ast.node import Node, NullType
+from frontend.ast.node import T, Node, NullType, Optional
 from frontend.ast.tree import *
-from frontend.ast.visitor import RecursiveVisitor, Visitor
+from frontend.ast.tree import T, FunctionDeclaration, Optional
+from frontend.ast.visitor import T, RecursiveVisitor, Visitor
 from frontend.scope.globalscope import GlobalScope
 from frontend.scope.scope import Scope, ScopeKind
 from frontend.scope.scopestack import ScopeStack
@@ -27,73 +28,96 @@ class Namer(Visitor[ScopeStack, None]):
     # Entry of this phase
     def transform(self, program: Program) -> Program:
         # Global scope. You don't have to consider it until Step 6.
-        program.globalScope = GlobalScope
-        ctx = ScopeStack(program.globalScope)
-        # ctx.open(program.globalScope)
+        ctx = GlobalScope
 
         program.accept(self, ctx)
         return program
 
-    def visitProgram(self, program: Program, ctx: ScopeStack) -> None:
+    def visitProgram(self, program: Program, ctx: Scope) -> None:
         # Check if the 'main' function is missing
         if not program.hasMainFunc():
             raise DecafNoMainFuncError
 
-        for func in program.functions().values():
+        for funcdecl in program.functiondeclarations():
+            funcdecl.accept(self, ctx)
+
+        for func in program.functiondefines():
             func.accept(self, ctx)
 
-    def visitFunction(self, func: Function, ctx: ScopeStack) -> None:
-        func.body.accept(self, ctx)
+    def visitFunctionDeclaration(self, funcdecl: FunctionDeclaration, ctx: Scope) -> None:
+        funcsymbol = FuncSymbol(funcdecl.ident.value, funcdecl.ret_t)
+        for para in funcdecl.para:
+            funcsymbol.addParaType(para.var_t.type)
+        ctx.declarefunc(funcsymbol)
+
+    def visitFunction(self, func: Function, ctx: Scope) -> None:
+        funcctx = ScopeStack()
+        funcsymbol = FuncSymbol(func.ident.value, func.ret_t)
+        for para in func.para:
+            funcsymbol.addParaType(para.var_t.type)
+        ctx.definefunc(funcsymbol)
+        funcctx.push(Scope(ScopeKind.PARA))
+        for para in func.para:
+            para.accept(self, funcctx)
+        func.body.accept(self, funcctx)
+        funcctx.pop()
+
+    def visitParameter(self, para: Parameter, ctx: ScopeStack) -> None:
+        symbol = VarSymbol(para.ident.value, para.var_t.type)
+        ctx.declare(symbol)
+        para.ident.setattr("symbol", symbol)
+
+    def visitCall(self, call: Call, ctx: ScopeStack) -> None:
+        if ctx.lookup(call.ident.value):
+            raise DecafDeclConflictError(call.ident.value)
+        funcsymbol = GlobalScope.lookup(call.ident.value)
+        if funcsymbol:
+            if funcsymbol.parameterNum != len(call.para):
+                raise DecafUndefinedFuncError(call.ident.value)
+        else:
+            raise DecafUndefinedFuncError(call.ident.value)
+        for expr in call.para:
+            expr.accept(self, ctx)
 
     def visitBlock(self, block: Block, ctx: ScopeStack) -> None:
-        local_scope = Scope(ScopeKind.LOCAL)
-        ctx.open(local_scope)
-
+        ctx.push(Scope(ScopeKind.LOCAL))
         for child in block:
             child.accept(self, ctx)
-
-        ctx.close()
+        ctx.pop()
 
     def visitReturn(self, stmt: Return, ctx: ScopeStack) -> None:
         stmt.expr.accept(self, ctx)
 
-    """
-    def visitFor(self, stmt: For, ctx: Scope) -> None:
+    def visitFor(self, stmt: For, ctx: ScopeStack) -> None:
+        ctx.push(Scope(ScopeKind.LOCAL))
+        stmt.init.accept(self, ctx)
+        stmt.cond.accept(self, ctx)
+        stmt.update.accept(self, ctx)
+        ctx.loopcnt += 1
+        stmt.body.accept(self, ctx)
+        ctx.loopcnt -= 1
+        ctx.pop()
 
-    1. Open a local scope for stmt.init.
-    2. Visit stmt.init, stmt.cond, stmt.update.
-    3. Open a loop in ctx (for validity checking of break/continue)
-    4. Visit body of the loop.
-    5. Close the loop and the local scope.
-    """
-
-    def visitIf(self, stmt: If, ctx: Scope) -> None:
+    def visitIf(self, stmt: If, ctx: ScopeStack) -> None:
         stmt.cond.accept(self, ctx)
         stmt.then.accept(self, ctx)
 
-        # check if the else branch exists
         if not stmt.otherwise is NULL:
             stmt.otherwise.accept(self, ctx)
 
     def visitWhile(self, stmt: While, ctx: ScopeStack) -> None:
         stmt.cond.accept(self, ctx)
+        ctx.loopcnt += 1
         stmt.body.accept(self, ctx)
+        ctx.loopcnt -= 1
 
-    def visitBreak(self, stmt: Break, ctx: Scope) -> None:
-        """
-        You need to check if it is currently within the loop.
-        To do this, you may need to check 'visitWhile'.
+    def visitBreak(self, stmt: Break, ctx: ScopeStack) -> None:
+        if ctx.loopcnt <= 0:
+            raise DecafBreakOutsideLoopError
 
-        if not in a loop:
-            raise DecafBreakOutsideLoopError()
-        """
-        raise NotImplementedError
-
-    """
-    def visitContinue(self, stmt: Continue, ctx: Scope) -> None:
-
-    1. Refer to the implementation of visitBreak.
-    """
+    def visitContinue(self, stmt: Continue, ctx: ScopeStack) -> None:
+        if ctx.loopcnt <= 0:
+            raise DecafContinueOutsideLoopError
 
     def visitDeclaration(self, decl: Declaration, ctx: ScopeStack) -> None:
         """
@@ -114,12 +138,10 @@ class Namer(Visitor[ScopeStack, None]):
             decl.init_expr.accept(self, ctx)
 
     def visitAssignment(self, expr: Assignment, ctx: ScopeStack) -> None:
-        """
-        1. Refer to the implementation of visitBinary.
-        """
         if not isinstance(expr.lhs, Identifier):
-            raise DecafSyntaxError(f'Cannot assign to value to {type(expr.lhs).__name__}')
-        self.visitBinary(expr, ctx)
+            raise DecafBadAssignTypeError
+        expr.lhs.accept(self, ctx)
+        expr.rhs.accept(self, ctx)
 
     def visitUnary(self, expr: Unary, ctx: ScopeStack) -> None:
         expr.operand.accept(self, ctx)
@@ -134,8 +156,7 @@ class Namer(Visitor[ScopeStack, None]):
         """
         expr.cond.accept(self, ctx)
         expr.then.accept(self, ctx)
-        if not expr.otherwise is NULL:
-            expr.otherwise.accept(self, ctx)
+        expr.otherwise.accept(self, ctx)
 
     def visitIdentifier(self, ident: Identifier, ctx: ScopeStack) -> None:
         """
@@ -144,7 +165,7 @@ class Namer(Visitor[ScopeStack, None]):
         3. Set the 'symbol' attribute of ident.
         """
         symbol = ctx.lookup(ident.value)
-        if (symbol is not None):
+        if symbol:
             ident.setattr("symbol", symbol)
         else:
             raise DecafUndefinedVarError(ident.value)

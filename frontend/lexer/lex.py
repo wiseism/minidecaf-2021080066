@@ -18,9 +18,12 @@ reserved = {
     "else": "Else",
     "while": "While",
     "break": "Break",
+    "for": "For",
+    "continue": "Continue"
 }
 
 t_Semi = ";"
+t_Comma = ","
 
 t_LParen = "("
 t_RParen = ")"

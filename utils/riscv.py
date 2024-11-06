@@ -1,12 +1,11 @@
 from typing import Final, Optional
-
 from utils.label.funclabel import FuncLabel
 from utils.label.label import Label, LabelKind
+from utils.tac.nativeinstr import NativeInstr
 from utils.tac.reg import Reg
+from utils.tac.tacinstr import TACInstr
 from utils.tac.tacop import InstrKind
 from utils.tac.temp import Temp
-from utils.tac.backendinstr import BackendInstr
-
 from enum import Enum, auto, unique
 
 WORD_SIZE: Final[int] = 4  # in bytes
@@ -32,14 +31,10 @@ class RvBinaryOp(Enum):
     SGT = auto()
     AND = auto()
     OR = auto()
-
-
-@unique
-class RvSpecialOp(Enum):
-    XORI = auto()
-
+    XOR = auto()
 
 class Riscv:
+
     ZERO = Reg(0, "x0")  # always zero
     RA = Reg(1, "ra")  # return address
     SP = Reg(2, "sp")  # stack pointer
@@ -74,23 +69,17 @@ class Riscv:
     T6 = Reg(31, "t6")
 
     CallerSaved = [T0, T1, T2, T3, T4, T5, T6, A0, A1, A2, A3, A4, A5, A6, A7]
-
     CalleeSaved = [S1, S2, S3, S4, S5, S6, S7, S8, S9, S10, S11]
-
     AllocatableRegs = CallerSaved + CalleeSaved
-
     ArgRegs = [A0, A1, A2, A3, A4, A5, A6, A7]
-
     EPILOGUE_SUFFIX = "_exit"
-
     FMT1 = "{}"
     FMT2 = "{}, {}"
     FMT3 = "{}, {}, {}"
     FMT_OFFSET = "{}, {}({})"
-
     # Todo FMT4
 
-    class JumpToEpilogue(BackendInstr):
+    class JumpToEpilogue(TACInstr):
         def __init__(self, label: Label) -> None:
             super().__init__(
                 InstrKind.RET,
@@ -102,7 +91,7 @@ class Riscv:
         def __str__(self) -> str:
             return "j " + str(self.label)
 
-    class RiscvLabel(BackendInstr):
+    class RiscvLabel(TACInstr):
         def __init__(self, label: Label) -> None:
             super().__init__(InstrKind.LABEL, [], [], label)
 
@@ -112,7 +101,7 @@ class Riscv:
         def isLabel(self) -> bool:
             return True
 
-    class LoadImm(BackendInstr):
+    class LoadImm(TACInstr):
         def __init__(self, dst: Temp, value: int) -> None:
             super().__init__(InstrKind.SEQ, [dst], [], None)
             self.value = value
@@ -120,14 +109,14 @@ class Riscv:
         def __str__(self) -> str:
             return "li " + Riscv.FMT2.format(str(self.dsts[0]), self.value)
 
-    class Move(BackendInstr):
+    class Move(TACInstr):
         def __init__(self, dst: Temp, src: Temp) -> None:
             super().__init__(InstrKind.SEQ, [dst], [src], None)
 
         def __str__(self) -> str:
             return "mv " + Riscv.FMT2.format(str(self.dsts[0]), str(self.srcs[0]))
 
-    class Unary(BackendInstr):
+    class Unary(TACInstr):
         def __init__(self, op: RvUnaryOp, dst: Temp, src: Temp) -> None:
             super().__init__(InstrKind.SEQ, [dst], [src], None)
             self.op = op.__str__()[10:].lower()
@@ -137,49 +126,34 @@ class Riscv:
                 str(self.dsts[0]), str(self.srcs[0])
             )
 
-    class Special(BackendInstr):
-        def __init__(self, op: RvUnaryOp, dst: Temp, src: int) -> None:
-            super().__init__(InstrKind.SEQ, [dst], [Temp(0)], None)
-            self.op = op.__str__()[12:].lower()
-            self.num = src
-
-        def __str__(self) -> str:
-            return "{} ".format(self.op) + Riscv.FMT3.format(
-                str(self.dsts[0]), str(self.dsts[0]), str(self.num)
-            )
-
-    class Binary(BackendInstr):
+    class Binary(TACInstr):
         def __init__(self, op: RvBinaryOp, dst: Temp, src0: Temp, src1: Temp) -> None:
-            self._zero = False
-            if src0 == 0:
-                super().__init__(InstrKind.SEQ, [dst], [Temp(0), src1], None)
-                self._zero = True
-            else:
-                super().__init__(InstrKind.SEQ, [dst], [src0, src1], None)
+            super().__init__(InstrKind.SEQ, [dst], [src0, src1], None)
             self.op = op.__str__()[11:].lower()
 
         def __str__(self) -> str:
             return "{} ".format(self.op) + Riscv.FMT3.format(
-                str(self.dsts[0]), ("zero" if self._zero else str(self.srcs[0])), str(self.srcs[1])
+                str(self.dsts[0]), str(self.srcs[0]), str(self.srcs[1])
             )
-
-    class Branch(BackendInstr):
-        def __init__(self, cond: Temp, target: Label) -> None:
+    
+    class Branch(TACInstr):
+        def __init__(self, beq: bool, cond: Temp, target: Label) -> None:
             super().__init__(InstrKind.COND_JMP, [], [cond], target)
             self.target = target
-
+            self.beq = beq
+        
         def __str__(self) -> str:
-            return "beq " + Riscv.FMT3.format(str(Riscv.ZERO), str(self.srcs[0]), str(self.target))
+            return ("beq " if self.beq else "bne ") + Riscv.FMT3.format(str(Riscv.ZERO), str(self.srcs[0]), str(self.target))
 
-    class Jump(BackendInstr):
+    class Jump(TACInstr):
         def __init__(self, target: Label) -> None:
             super().__init__(InstrKind.JMP, [], [], target)
             self.target = target
-
+        
         def __str__(self) -> str:
             return "j " + str(self.target)
 
-    class SPAdd(BackendInstr):
+    class SPAdd(NativeInstr):
         def __init__(self, offset: int) -> None:
             super().__init__(InstrKind.SEQ, [Riscv.SP], [Riscv.SP], None)
             self.offset = offset
@@ -190,7 +164,7 @@ class Riscv:
                 str(Riscv.SP), str(Riscv.SP), str(self.offset)
             )
 
-    class NativeStoreWord(BackendInstr):
+    class NativeStoreWord(NativeInstr):
         def __init__(self, src: Reg, base: Reg, offset: int) -> None:
             super().__init__(InstrKind.SEQ, [], [src, base], None)
             self.offset = offset
@@ -201,7 +175,7 @@ class Riscv:
                 str(self.srcs[0]), str(self.offset), str(self.srcs[1])
             )
 
-    class NativeLoadWord(BackendInstr):
+    class NativeLoadWord(NativeInstr):
         def __init__(self, dst: Reg, base: Reg, offset: int) -> None:
             super().__init__(InstrKind.SEQ, [dst], [base], None)
             self.offset = offset
@@ -212,9 +186,64 @@ class Riscv:
                 str(self.dsts[0]), str(self.offset), str(self.srcs[0])
             )
 
-    class NativeReturn(BackendInstr):
+    class NativeReturn(NativeInstr):
         def __init__(self) -> None:
             super().__init__(InstrKind.RET, [Riscv.RA], [], None)
 
         def __str__(self) -> str:
             return "ret"
+
+    class CallFunc(TACInstr):
+        def __init__(self, func: Label) -> None:
+            super().__init__(InstrKind.SEQ, [], [], func)
+            self.func = func
+
+        def __str__(self) -> str:
+            return "call %s" % self.func.name
+        
+    class StoreWord(TACInstr):
+        def __init__(self, src: Temp, base: Temp, offset: int) -> None:
+            super().__init__(InstrKind.SEQ, [], [src, base], None)
+            self.offset = offset
+
+        def __str__(self) -> str:
+            assert -2048 <= self.offset <= 2047  # Riscv imm [11:0]
+            return "sw " + Riscv.FMT_OFFSET.format(
+                str(self.srcs[0]), str(self.offset), str(self.srcs[1])
+            )
+        
+    class LoadWord(TACInstr):
+        def __init__(self, dst: Temp, base: Temp, offset: int) -> None:
+            super().__init__(InstrKind.SEQ, [dst], [base], None)
+            self.offset = offset
+
+        def __str__(self) -> str:
+            assert -2048 <= self.offset <= 2047  # Riscv imm [11:0]
+            return "lw " + Riscv.FMT_OFFSET.format(
+                str(self.dsts[0]), str(self.offset), str(self.srcs[0])
+            )
+        
+    class SPAddNoneNative(TACInstr):
+        def __init__(self, offset: int) -> None:
+            super().__init__(InstrKind.SEQ, [Riscv.SP], [Riscv.SP], None)
+            self.offset = offset
+
+        def __str__(self) -> str:
+            assert -2048 <= self.offset <= 2047  # Riscv imm [11:0]
+            return "addi " + Riscv.FMT3.format(
+                str(Riscv.SP), str(Riscv.SP), str(self.offset)
+            )
+    
+    class StoreCallerSaved(TACInstr):
+        def __init__(self) -> None:
+            super().__init__(InstrKind.SEQ, [], [], None)
+
+        def __str__(self) -> str:
+            return "storecallersaved"
+        
+    class LoadCallerSaved(TACInstr):
+        def __init__(self) -> None:
+            super().__init__(InstrKind.SEQ, [], [], None)
+
+        def __str__(self) -> str:
+            return "loadcallersaved"

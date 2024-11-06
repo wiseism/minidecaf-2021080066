@@ -45,7 +45,7 @@ class ListNode(Node, Generic[_T]):
         return None if ret.count(None) == len(ret) else ret
 
 
-class Program(ListNode["Function"]):
+class Program(ListNode["Union[Function, FunctionDeclaration]"]):
     """
     AST root. It should have only one children before step9.
     """
@@ -55,6 +55,12 @@ class Program(ListNode["Function"]):
 
     def functions(self) -> dict[str, Function]:
         return {func.ident.value: func for func in self if isinstance(func, Function)}
+    
+    def functiondefines(self) -> list[Function]:
+        return [func for func in self if isinstance(func, Function)]
+
+    def functiondeclarations(self) -> list[FunctionDeclaration]:
+        return [funcdecl for funcdecl in self if isinstance(funcdecl, FunctionDeclaration)]
 
     def hasMainFunc(self) -> bool:
         return "main" in self.functions()
@@ -76,24 +82,86 @@ class Function(Node):
         ret_t: TypeLiteral,
         ident: Identifier,
         body: Block,
+        para: Optional[ParameterList] = None,
     ) -> None:
         super().__init__("function")
         self.ret_t = ret_t
         self.ident = ident
         self.body = body
+        self.para = para
 
     def __getitem__(self, key: int) -> Node:
         return (
             self.ret_t,
             self.ident,
+            self.para,
             self.body,
+        )[key]
+
+    def __len__(self) -> int:
+        return 4
+
+    def accept(self, v: Visitor[T, U], ctx: T):
+        return v.visitFunction(self, ctx)
+
+
+class FunctionDeclaration(Node):
+    """
+    AST node that represents a function declaration.
+    """
+
+    def __init__(
+        self,
+        ret_t: TypeLiteral,
+        ident: Identifier,
+        para: Optional[ParameterList] = None,
+    ) -> None:
+        super().__init__("functiondeclaration")
+        self.ret_t = ret_t
+        self.ident = ident
+        self.para = para
+
+    def __getitem__(self, key: int) -> Node:
+        return (
+            self.ret_t,
+            self.ident,
+            self.para,
         )[key]
 
     def __len__(self) -> int:
         return 3
 
     def accept(self, v: Visitor[T, U], ctx: T):
-        return v.visitFunction(self, ctx)
+        return v.visitFunctionDeclaration(self, ctx)
+
+
+class Parameter(Node):
+    """
+    Singel parameter of function 
+    """
+
+    def __init__(self, var_t: TypeLiteral, ident: Identifier) -> None:
+        super().__init__("parameter")
+        self.var_t = var_t
+        self.ident = ident
+
+    def __getitem__(self, key: int) -> Node:
+        return (self.var_t, self.ident)[key]
+    
+    def __len__(self) -> int:
+        return 2
+    
+    def accept(self, v: Visitor[T, U], ctx: T):
+        return v.visitParameter(self, ctx)
+
+
+class ParameterList(ListNode["Parameter"]):
+    """
+    Parameter list
+    """
+
+    def __init__(self, *children: Parameter) -> None:
+        super().__init__("parameterlist", list(children))
 
 
 class Statement(Node):
@@ -172,6 +240,28 @@ class While(Statement):
         return v.visitWhile(self, ctx)
 
 
+class For(Statement):
+    """
+    AST node of for statement
+    """
+
+    def __init__(self, body: Statement, init: Optional[Union[Statement, Declaration]] = None, cond: Optional[Expression] = None, update: Optional[Expression] = None, ) -> None:
+        super().__init__("for")
+        self.init = init
+        self.cond = cond
+        self.update = update
+        self.body = body
+
+    def __getitem__(self, key: int) -> Node:
+        return (self.init, self.cond, self.update, self.body)[key]
+    
+    def __len__(self) -> int:
+        return 4
+    
+    def accept(self, v: Visitor[T, U], ctx: T) -> U | None:
+        return v.visitFor(self, ctx)
+    
+
 class Break(Statement):
     """
     AST node of break statement.
@@ -188,6 +278,27 @@ class Break(Statement):
 
     def accept(self, v: Visitor[T, U], ctx: T):
         return v.visitBreak(self, ctx)
+
+    def is_leaf(self):
+        return True
+    
+
+class Continue(Statement):
+    """
+    AST node of continue statement
+    """
+
+    def __init__(self) -> None:
+        super().__init__("continue")
+    
+    def __getitem__(self, key: int) -> Node:
+        raise _index_len_err(key, self)
+    
+    def __len__(self) -> int:
+        return 0
+    
+    def accept(self, v: Visitor[T, U], ctx: T):
+        return v.visitContinue(self, ctx)
 
     def is_leaf(self):
         return True
@@ -242,6 +353,35 @@ class Expression(Node):
     def __init__(self, name: str) -> None:
         super().__init__(name)
         self.type: Optional[DecafType] = None
+
+
+class ExpressionList(ListNode["Expression"]):
+    """
+    Expression list
+    """
+
+    def __init__(self, *children: Expression) -> None:
+        super().__init__("expressionlist", list(children))
+
+
+class Call(Expression):
+    """
+    AST node of function call
+    """
+
+    def __init__(self, ident: Identifier, para: Optional[ExpressionList] = None) -> None:
+        super().__init__("call")
+        self.ident = ident
+        self.para = para
+
+    def __getitem__(self, key: int) -> Node:
+        return (self.ident, self.para)[key]
+    
+    def __len__(self) -> int:
+        return 2
+    
+    def accept(self, v: Visitor[T, U], ctx: T):
+        return v.visitCall(self, ctx)
 
 
 class Unary(Expression):

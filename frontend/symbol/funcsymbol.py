@@ -10,9 +10,8 @@ Function symbol, representing a function definition.
 
 
 class FuncSymbol(Symbol):
-    def __init__(self, name: str, type: DecafType, scope: Scope) -> None:
+    def __init__(self, name: str, type: DecafType) -> None:
         super().__init__(name, type)
-        self.scope = scope
         self.para_type = []
 
     def __str__(self) -> str:

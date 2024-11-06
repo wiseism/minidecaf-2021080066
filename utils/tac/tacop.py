@@ -46,6 +46,11 @@ class TacBinaryOp(Enum):
     NEQ = auto()
     LEQ = auto()
     GEQ = auto()
+    AND = auto()
+    OR = auto()
+    BITAND = auto()
+    BITOR = auto()
+    XOR = auto()
 
 
 # Kinds of branching with conditions.

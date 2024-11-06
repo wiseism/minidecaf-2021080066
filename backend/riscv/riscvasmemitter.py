@@ -1,14 +1,16 @@
 from typing import Sequence, Tuple
 
+from backend.asmemitter import AsmEmitter
 from utils.error import IllegalArgumentException
 from utils.label.label import Label, LabelKind
 from utils.riscv import Riscv, RvBinaryOp, RvUnaryOp
 from utils.tac.reg import Reg
 from utils.tac.tacfunc import TACFunc
 from utils.tac.tacinstr import *
+from utils.tac.tacinstr import Assign, Callinstr, Param
 from utils.tac.tacvisitor import TACVisitor
-from utils.asmcodeprinter import AsmCodePrinter
-from utils.tac.backendinstr import BackendInstr
+
+from ..subroutineemitter import SubroutineEmitter
 from ..subroutineinfo import SubroutineInfo
 
 """
@@ -16,16 +18,14 @@ RiscvAsmEmitter: an AsmEmitter for RiscV
 """
 
 
-class RiscvAsmEmitter():
+class RiscvAsmEmitter(AsmEmitter):
     def __init__(
-        self,
-        allocatableRegs: list[Reg],
-        callerSaveRegs: list[Reg],
-    ):
-        self.allocatableRegs = allocatableRegs
-        self.callerSaveRegs = callerSaveRegs
-        self.printer = AsmCodePrinter()
-    
+            self,
+            allocatableRegs: list[Reg],
+            callerSaveRegs: list[Reg],
+    ) -> None:
+        super().__init__(allocatableRegs, callerSaveRegs)
+
         # the start of the asm code
         # int step10, you need to add the declaration of global var here
         self.printer.println(".text")
@@ -39,10 +39,26 @@ class RiscvAsmEmitter():
         selector: RiscvAsmEmitter.RiscvInstrSelector = (
             RiscvAsmEmitter.RiscvInstrSelector(func.entry)
         )
+        for temp in func.argTemps:
+            id = temp.argOrder1 - 1
+            if id < 8:
+                # print(id)
+                selector.seq.append(Riscv.Move(temp, Riscv.ArgRegs[id]))
+            else:
+                selector.seq.append(Riscv.LoadWord(temp, Riscv.SP, 4 * (id - 8)))
+        calling = False
         for instr in func.getInstrSeq():
+            if isinstance(instr, Param) and not calling:
+                calling = True
+                selector.seq.append(Riscv.StoreCallerSaved())
             instr.accept(selector)
+            if isinstance(instr, Callinstr):
+                calling = False
+                selector.seq.append(Riscv.LoadCallerSaved())
 
         info = SubroutineInfo(func.entry)
+        # for item in selector.seq:
+        #     print(str(item))
 
         return (selector.seq, info)
 
@@ -79,63 +95,73 @@ class RiscvAsmEmitter():
         def visitUnary(self, instr: Unary) -> None:
             op = {
                 TacUnaryOp.NEG: RvUnaryOp.NEG,
-                TacUnaryOp.BITNOT: RvUnaryOp.NOT,
                 TacUnaryOp.LOGICNOT: RvUnaryOp.SEQZ,
-                # You can add unary operations here.
+                TacUnaryOp.BITNOT: RvUnaryOp.NOT
             }[instr.op]
             self.seq.append(Riscv.Unary(op, instr.dst, instr.operand))
-
-        def visitAssign(self, instr: Assign) -> None:
-            self.seq.append(Riscv.Move(instr.dst, instr.src))
 
         def visitBinary(self, instr: Binary) -> None:
             """
             For different tac operation, you should translate it to different RiscV code
             A tac operation may need more than one RiscV instruction
             """
-            if instr.op == TacBinaryOp.LOR:
-                self.seq.append(Riscv.Binary(RvBinaryOp.OR, instr.dst, instr.lhs, instr.rhs))
-                self.seq.append(Riscv.Unary(RvUnaryOp.SNEZ, instr.dst, instr.dst))
-            elif instr.op == TacBinaryOp.LAND:
-                self.seq.append(Riscv.Unary(RvUnaryOp.SNEZ, instr.dst, instr.lhs))
-                self.seq.append(Riscv.Binary(RvBinaryOp.SUB, instr.dst, Riscv.ZERO, instr.dst))
-                self.seq.append(Riscv.Binary(RvBinaryOp.AND, instr.dst, instr.dst, instr.rhs))
-                self.seq.append(Riscv.Unary(RvUnaryOp.SNEZ, instr.dst, instr.dst))
-            elif instr.op == TacBinaryOp.EQU:
+            if instr.op == TacBinaryOp.EQU:
                 self.seq.append(Riscv.Binary(RvBinaryOp.SUB, instr.dst, instr.lhs, instr.rhs))
                 self.seq.append(Riscv.Unary(RvUnaryOp.SEQZ, instr.dst, instr.dst))
             elif instr.op == TacBinaryOp.NEQ:
                 self.seq.append(Riscv.Binary(RvBinaryOp.SUB, instr.dst, instr.lhs, instr.rhs))
                 self.seq.append(Riscv.Unary(RvUnaryOp.SNEZ, instr.dst, instr.dst))
             elif instr.op == TacBinaryOp.LEQ:
-                self.seq.append(Riscv.Binary(RvBinaryOp.SLT, instr.dst, instr.lhs, instr.rhs))
-                self.seq.append(Riscv.Binary(RvBinaryOp.SUB, instr.lhs, instr.lhs, instr.rhs))
-                self.seq.append(Riscv.Unary(RvUnaryOp.SEQZ, instr.lhs, instr.lhs))
-                self.seq.append(Riscv.Binary(RvBinaryOp.OR, instr.dst, instr.dst, instr.lhs))
-            elif instr.op == TacBinaryOp.GEQ:
                 self.seq.append(Riscv.Binary(RvBinaryOp.SGT, instr.dst, instr.lhs, instr.rhs))
-                self.seq.append(Riscv.Binary(RvBinaryOp.SUB, instr.lhs, instr.lhs, instr.rhs))
-                self.seq.append(Riscv.Unary(RvUnaryOp.SEQZ, instr.lhs, instr.lhs))
-                self.seq.append(Riscv.Binary(RvBinaryOp.OR, instr.dst, instr.dst, instr.lhs))
+                self.seq.append(Riscv.Unary(RvUnaryOp.SEQZ, instr.dst, instr.dst))
+            elif instr.op == TacBinaryOp.GEQ:
+                self.seq.append(Riscv.Binary(RvBinaryOp.SLT, instr.dst, instr.lhs, instr.rhs))
+                self.seq.append(Riscv.Unary(RvUnaryOp.SEQZ, instr.dst, instr.dst))
+            elif instr.op == TacBinaryOp.AND:
+                self.seq.append(Riscv.Unary(RvUnaryOp.SNEZ, instr.lhs, instr.lhs))
+                self.seq.append(Riscv.Unary(RvUnaryOp.SNEZ, instr.rhs, instr.rhs))
+                self.seq.append(Riscv.Binary(RvBinaryOp.AND, instr.dst, instr.lhs, instr.rhs))
+            elif instr.op == TacBinaryOp.OR:
+                self.seq.append(Riscv.Binary(RvBinaryOp.OR, instr.dst, instr.lhs, instr.rhs))
+                self.seq.append(Riscv.Unary(RvUnaryOp.SNEZ, instr.dst, instr.dst))
             else:
                 op = {
                     TacBinaryOp.ADD: RvBinaryOp.ADD,
                     TacBinaryOp.SUB: RvBinaryOp.SUB,
                     TacBinaryOp.MUL: RvBinaryOp.MUL,
                     TacBinaryOp.DIV: RvBinaryOp.DIV,
-                    TacBinaryOp.REM: RvBinaryOp.REM,
+                    TacBinaryOp.MOD: RvBinaryOp.REM,
                     TacBinaryOp.SLT: RvBinaryOp.SLT,
                     TacBinaryOp.SGT: RvBinaryOp.SGT,
-                    # You can add binary operations here.
+                    TacBinaryOp.BITAND: RvBinaryOp.AND,
+                    TacBinaryOp.BITOR: RvBinaryOp.OR,
+                    TacBinaryOp.XOR: RvBinaryOp.XOR,
                 }[instr.op]
                 self.seq.append(Riscv.Binary(op, instr.dst, instr.lhs, instr.rhs))
 
         def visitCondBranch(self, instr: CondBranch) -> None:
-            self.seq.append(Riscv.Branch(instr.cond, instr.label))
+            beq = True if instr.op == CondBranchOp.BEQ else False
+            self.seq.append(Riscv.Branch(beq, instr.cond, instr.label))
 
         def visitBranch(self, instr: Branch) -> None:
             self.seq.append(Riscv.Jump(instr.target))
 
+        def visitAssign(self, instr: Assign) -> None:
+            self.seq.append(Riscv.Move(instr.dst, instr.src))
+
+        def visitParam(self, instr: Param) -> None:
+            order = -1 * instr.src.argOrder2 - 1
+            if order < 8:
+                self.seq.append(Riscv.Move(Riscv.ArgRegs[order], instr.src))
+            else:
+                self.seq.append(Riscv.SPAddNoneNative(-4))
+                self.seq.append(Riscv.StoreWord(instr.src, Riscv.SP, 0))
+
+        def visitCall(self, instr: Callinstr) -> None:
+            self.seq.append(Riscv.CallFunc(instr.func))
+            if instr.argNum > 8:
+                self.seq.append(Riscv.SPAddNoneNative(4 * (instr.argNum - 8)))
+            self.seq.append(Riscv.Move(instr.dst, Riscv.A0))
         # in step9, you need to think about how to pass the parameters and how to store and restore callerSave regs
         # in step11, you need to think about how to store the array
 
@@ -144,16 +170,16 @@ class RiscvAsmEmitter():
 RiscvAsmEmitter: an SubroutineEmitter for RiscV
 """
 
-class RiscvSubroutineEmitter():
+
+class RiscvSubroutineEmitter(SubroutineEmitter):
     def __init__(self, emitter: RiscvAsmEmitter, info: SubroutineInfo) -> None:
-        self.info = info
-        self.printer = emitter.printer
-        
-        # + 4 is for the RA reg 
+        super().__init__(emitter, info)
+
+        # + 4 is for the RA reg
         self.nextLocalOffset = 4 * len(Riscv.CalleeSaved) + 4
-        
+
         # the buf which stored all the NativeInstrs in this function
-        self.buf: list[BackendInstr] = []
+        self.buf: list[NativeInstr] = []
 
         # from temp to int
         # record where a temp is stored in the stack
@@ -166,13 +192,6 @@ class RiscvSubroutineEmitter():
     def emitComment(self, comment: str) -> None:
         # you can add some log here to help you debug
         pass
-
-    def isNonReturnedBlock(self):
-        # Check if the last instruction in the buffer is a return instruction
-        if not self.buf:
-            return True  # If buffer is empty, consider it as non-returned block
-        last_instr = self.buf[-1]
-        return not isinstance(last_instr, Riscv.NativeReturn)
 
     # store some temp to stack
     # usually happen when reaching the end of a basicblock
@@ -197,15 +216,14 @@ class RiscvSubroutineEmitter():
             )
 
     # add a NativeInstr to buf
-    # when calling the fuction emitAsm, all the instr in buf will be transformed to RiscV code
-    def emitAsm(self, instr: BackendInstr):
+    # when calling the fuction emitEnd, all the instr in buf will be transformed to RiscV code
+    def emitNative(self, instr: NativeInstr):
         self.buf.append(instr)
 
     def emitLabel(self, label: Label):
-        self.buf.append(Riscv.RiscvLabel(label))
+        self.buf.append(Riscv.RiscvLabel(label).toNative([], []))
 
-    
-    def emitFunc(self):
+    def emitEnd(self):
         self.printer.printComment("start of prologue")
         self.printer.printInstr(Riscv.SPAdd(-self.nextLocalOffset))
 
@@ -216,6 +234,9 @@ class RiscvSubroutineEmitter():
                 self.printer.printInstr(
                     Riscv.NativeStoreWord(Riscv.CalleeSaved[i], Riscv.SP, 4 * i)
                 )
+        self.printer.printInstr(
+            Riscv.NativeStoreWord(Riscv.RA, Riscv.SP, 44)
+        )
 
         self.printer.printComment("end of prologue")
         self.printer.println("")
@@ -227,7 +248,11 @@ class RiscvSubroutineEmitter():
 
         # using asmcodeprinter to output the RiscV code
         for instr in self.buf:
-            self.printer.printInstr(instr)
+            if instr.further != -1:
+                tacinstr = Riscv.LoadWord(instr.dsts, Riscv.SP, instr.further + self.nextLocalOffset)
+                self.printer.printInstr(tacinstr.toNative(instr.dsts, [Riscv.SP]))
+            else:
+                self.printer.printInstr(instr)
 
         self.printer.printComment("end of body")
         self.printer.println("")
@@ -242,6 +267,9 @@ class RiscvSubroutineEmitter():
                 self.printer.printInstr(
                     Riscv.NativeLoadWord(Riscv.CalleeSaved[i], Riscv.SP, 4 * i)
                 )
+        self.printer.printInstr(
+            Riscv.NativeLoadWord(Riscv.RA, Riscv.SP, 44)
+        )
 
         self.printer.printInstr(Riscv.SPAdd(self.nextLocalOffset))
         self.printer.printComment("end of epilogue")

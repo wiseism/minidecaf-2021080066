@@ -5,7 +5,7 @@ from backend.dataflow.cfg import CFG
 from backend.dataflow.loc import Loc
 from backend.reg.regalloc import RegAlloc
 from backend.riscv.riscvasmemitter import RiscvAsmEmitter
-from backend.riscv.riscvasmemitter import RiscvSubroutineEmitter
+from backend.subroutineemitter import SubroutineEmitter
 from backend.subroutineinfo import SubroutineInfo
 from utils.riscv import Riscv
 from utils.tac.reg import Reg
@@ -35,18 +35,14 @@ class BruteRegAlloc(RegAlloc):
             reg.used = False
 
     def accept(self, graph: CFG, info: SubroutineInfo) -> None:
-        subEmitter = RiscvSubroutineEmitter(self.emitter, info)
-
+        subEmitter = self.emitter.emitSubroutine(info)
         for bb in graph.iterator():
-            # you need to think more here
-            # maybe we don't need to alloc regs for all the basic blocks
-            if (graph.unreachableBlock(bb.id)) == False:
-                self.localAlloc(bb, subEmitter)
-
+            if not graph.unreachableBlock(bb.id):
+                continue
             if bb.label is not None:
                 subEmitter.emitLabel(bb.label)
             self.localAlloc(bb, subEmitter)
-        subEmitter.emitFunc()
+        subEmitter.emitEnd()
 
     def bind(self, temp: Temp, reg: Reg):
         reg.used = True
@@ -59,15 +55,34 @@ class BruteRegAlloc(RegAlloc):
             self.bindings[temp.index].occupied = False
             self.bindings.pop(temp.index)
 
-    def localAlloc(self, bb: BasicBlock, subEmitter: RiscvSubroutineEmitter):
+    def localAlloc(self, bb: BasicBlock, subEmitter: SubroutineEmitter):
+        self.bindings.clear()
         for reg in self.emitter.allocatableRegs:
             reg.occupied = False
 
         # in step9, you may need to think about how to store callersave regs here
+        save = []
+        for loc in bb.allSeq():
+            if isinstance(loc.instr, Riscv.CallFunc):
+                save.append(loc.liveIn)
+
+        pointer = 0
+
         for loc in bb.allSeq():
             subEmitter.emitComment(str(loc.instr))
-
-            self.allocForLoc(loc, subEmitter)
+            if isinstance(loc.instr, Riscv.StoreCallerSaved):
+                live = save[pointer]
+                for reg in Riscv.CallerSaved:
+                    if reg.occupied and reg.temp.index in live:
+                        subEmitter.emitStoreToStack(reg)
+            elif isinstance(loc.instr, Riscv.LoadCallerSaved):
+                live = save[pointer]
+                pointer += 1
+                for reg in Riscv.CallerSaved:
+                    if reg.occupied and reg.temp.index in live:
+                        subEmitter.emitLoadFromStack(reg, reg.temp)
+            else:
+                self.allocForLoc(loc, subEmitter)
 
         for tempindex in bb.liveOut:
             if tempindex in self.bindings:
@@ -75,10 +90,8 @@ class BruteRegAlloc(RegAlloc):
 
         if (not bb.isEmpty()) and (bb.kind is not BlockKind.CONTINUOUS):
             self.allocForLoc(bb.locs[len(bb.locs) - 1], subEmitter)
-        
-        self.bindings.clear()  
 
-    def allocForLoc(self, loc: Loc, subEmitter: RiscvSubroutineEmitter):
+    def allocForLoc(self, loc: Loc, subEmitter: SubroutineEmitter):
         instr = loc.instr
         srcRegs: list[Reg] = []
         dstRegs: list[Reg] = []
@@ -96,11 +109,14 @@ class BruteRegAlloc(RegAlloc):
                 dstRegs.append(temp)
             else:
                 dstRegs.append(self.allocRegFor(temp, False, loc.liveIn, subEmitter))
-        instr.fillRegs(dstRegs, srcRegs)
-        subEmitter.emitAsm(instr)
+
+        nativeinstr = instr.toNative(dstRegs, srcRegs)
+        if isinstance(instr, Riscv.LoadWord):
+            nativeinstr.further = instr.offset
+        subEmitter.emitNative(nativeinstr)
 
     def allocRegFor(
-            self, temp: Temp, isRead: bool, live: set[int], subEmitter: RiscvSubroutineEmitter
+        self, temp: Temp, isRead: bool, live: set[int], subEmitter: SubroutineEmitter
     ):
         if temp.index in self.bindings:
             return self.bindings[temp.index]
@@ -112,7 +128,7 @@ class BruteRegAlloc(RegAlloc):
                         str(temp), str(reg), str(isRead)
                     )
                 )
-                if isRead and not subEmitter.isNonReturnedBlock():
+                if isRead:
                     subEmitter.emitLoadFromStack(reg, temp)
                 if reg.occupied:
                     self.unbind(reg.temp)

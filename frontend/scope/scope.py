@@ -3,6 +3,7 @@ from enum import Enum, auto, unique
 
 from typing import Optional
 from frontend.symbol.symbol import Symbol
+from frontend.symbol.varsymbol import VarSymbol
 
 """
 A scope stores the mapping from names to symbols. There are two kinds of scopes:
@@ -15,6 +16,7 @@ A scope stores the mapping from names to symbols. There are two kinds of scopes:
 class ScopeKind(Enum):
     GLOBAL = auto()
     LOCAL = auto()
+    PARA = auto()
 
 
 class Scope:
@@ -38,7 +40,7 @@ class Scope:
     # To check if this is a global scope.
     def isGlobalScope(self) -> bool:
         return False
-    
+
     # To get a symbol if declared in the scope
     def lookup(self, name: str) -> Optional[Symbol]:
         if self.containsKey(name):

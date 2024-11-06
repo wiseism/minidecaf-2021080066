@@ -1,7 +1,5 @@
 from backend.dataflow.basicblock import BasicBlock
 
-from collections import deque
-
 """
 CFG: Control Flow Graph
 
@@ -15,30 +13,31 @@ class CFG:
     def __init__(self, nodes: list[BasicBlock], edges: list[(int, int)]) -> None:
         self.nodes = nodes
         self.edges = edges
+        self.reachable = []
 
         self.links = []
 
         for i in range(len(nodes)):
             self.links.append((set(), set()))
+            self.reachable.append(0)
 
         for (u, v) in edges:
             self.links[u][1].add(v)
             self.links[v][0].add(u)
 
-        # search the graph and determine nodes reachable from the root
-        self.reachable = deque()
-        queue = deque([0])
-        while queue:
-            visited = queue.popleft()
-            self.reachable.append(visited)
+        self.reachable[0] = 1
+        self.dfs(0)
 
-            for n in self.links[visited][1].difference(self.reachable):
-                queue.append(n)
+    def dfs(self, id: int):
+        for succ in self.getSucc(id):
+            if self.reachable[succ] == 0:
+                self.reachable[succ] = 1
+                self.dfs(succ)
 
     def unreachableBlock(self, id):
-        return id not in self.reachable
+        return self.reachable[id]
 
-    def getBlock(self, id):
+    def getBlock(self, id: int):
         return self.nodes[id]
 
     def getPrev(self, id):
@@ -50,7 +49,7 @@ class CFG:
     def getInDegree(self, id):
         return len(self.links[id][0])
 
-    def getOutDegree(self, id):
+    def getOutDegree(self, id: int):
         return len(self.links[id][1])
 
     def iterator(self):
