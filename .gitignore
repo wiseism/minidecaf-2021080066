@@ -13,3 +13,6 @@ parsetab.py
 
 # test
 test*
+
+# Pycharm
+.idea/
