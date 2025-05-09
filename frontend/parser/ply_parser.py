@@ -10,7 +10,6 @@ Add your own parser rules on demand, which can be accomplished by:
 Refer to https://www.dabeaz.com/ply/ply.html for more details.
 """
 
-
 import ply.yacc as yacc
 
 from frontend.ast.tree import *
@@ -41,18 +40,23 @@ def p_empty(p: yacc.YaccProduction):
 
 def p_program(p):
     """
-    program : program function
+    program : program element
+            | empty
     """
-    if p[2] is not NULL:
-        p[1].children.append(p[2])
+    if len(p) == 3:
+        if isinstance(p[2], (Function, Declaration)):
+            p[1].children.append(p[2])
+        p[0] = p[1]
+    else:
+        p[0] = Program()
+
+
+def p_element(p):
+    """
+    element : function
+            | declaration
+    """
     p[0] = p[1]
-
-
-def p_program_empty(p):
-    """
-    program : empty
-    """
-    p[0] = Program()
 
 
 def p_type(p):
@@ -132,7 +136,7 @@ def p_block_empty(p):
 def p_block_item(p):
     """
     block_item : statement
-        | declaration Semi
+               | declaration
     """
     p[0] = p[1]
 
@@ -140,7 +144,7 @@ def p_block_item(p):
 def p_statement(p):
     """
     statement : statement_matched
-        | statement_unmatched
+              | statement_unmatched
     """
     p[0] = p[1]
 
@@ -172,7 +176,12 @@ def p_for(p):
     statement_matched : For LParen opt_expression Semi opt_expression Semi opt_expression RParen statement_matched
                       | For LParen declaration Semi opt_expression Semi opt_expression RParen statement_matched
     """
-    p[0] = For(p[9], p[3], p[5], p[7])
+    if len(p) == 10:
+        # For loop with initialization expression
+        p[0] = For(p[9], p[3], p[5], p[7])
+    else:
+        # For loop with initialization declaration
+        p[0] = For(p[9], p[3], p[5], p[7])
 
 
 def p_return(p):
@@ -226,34 +235,31 @@ def p_opt_expression_empty(p):
 
 def p_declaration(p):
     """
-    declaration : type Identifier
+    declaration : type Identifier Semi
+                | type Identifier Assign expression Semi
     """
-    p[0] = Declaration(p[1], p[2])
+    if len(p) == 4:
+        p[0] = Declaration(p[1], p[2])
+    else:
+        p[0] = Declaration(p[1], p[2], p[4])
 
 
-def p_declaration_init(p):
-    """
-    declaration : type Identifier Assign expression
-    """
-    p[0] = Declaration(p[1], p[2], p[4])
-
-
-def p_expression_precedence(p):
+def p_expression(p):
     """
     expression : assignment
-    assignment : conditional
-    conditional : logical_or
-    logical_or : logical_and
-    logical_and : bit_or
-    bit_or : xor
-    xor : bit_and
-    bit_and : equality
-    equality : relational
-    relational : additive
-    additive : multiplicative
-    multiplicative : unary
-    unary : postfix
-    postfix : primary
+               | conditional
+               | logical_or
+               | logical_and
+               | bit_or
+               | xor
+               | bit_and
+               | equality
+               | relational
+               | additive
+               | multiplicative
+               | unary
+               | postfix
+               | primary
     """
     p[0] = p[1]
 
@@ -268,7 +274,7 @@ def p_function_call(p):
 def p_expressionlist(p):
     """
     expressionlist : expressionlist_empty
-                   | expressionlist_notempty
+                  | expressionlist_notempty
     """
     p[0] = p[1]
 
@@ -298,8 +304,8 @@ def p_expressionlist_expr(p):
 def p_unary_expression(p):
     """
     unary : Minus unary
-        | BitNot unary
-        | Not unary
+          | BitNot unary
+          | Not unary
     """
     unary(p)
 
@@ -313,16 +319,16 @@ def p_binary_expression(p):
     xor : xor Xor bit_and
     bit_and : bit_and BitAnd equality
     equality : equality NotEqual relational
-        | equality Equal relational
+             | equality Equal relational
     relational : relational Less additive
-        | relational Greater additive
-        | relational LessEqual additive
-        | relational GreaterEqual additive
+               | relational Greater additive
+               | relational LessEqual additive
+               | relational GreaterEqual additive
     additive : additive Plus multiplicative
-        | additive Minus multiplicative
+             | additive Minus multiplicative
     multiplicative : multiplicative Mul unary
-        | multiplicative Div unary
-        | multiplicative Mod unary
+                 | multiplicative Div unary
+                 | multiplicative Mod unary
     """
     binary(p)
 
@@ -370,5 +376,20 @@ def p_error(t):
     return parser.token()
 
 
-parser = yacc.yacc(start="program")
+# Define operator precedence to resolve shift-reduce conflicts
+precedence = (
+    ('left', 'Or'),
+    ('left', 'And'),
+    ('left', 'BitOr'),
+    ('left', 'Xor'),
+    ('left', 'BitAnd'),
+    ('left', 'Equal', 'NotEqual'),
+    ('left', 'Less', 'LessEqual', 'Greater', 'GreaterEqual'),
+    ('left', 'Plus', 'Minus'),
+    ('left', 'Mul', 'Div', 'Mod'),
+    ('right', 'Not', 'BitNot', 'Minus'),  # Unary operators
+)
+
+# Build the parser with debug information (optional)
+parser = yacc.yacc(start="program", debug=False)
 parser.error_stack = error_stack  # type: ignore
